@@ -1,9 +1,9 @@
 Package: RBF
 Type: Package
 Title: Robust Backfitting
-Version: 1.0.0
-Date: 2019-06-11
-Authors@R: c(person("Matias", "Salibian-Barrera", role = c("cre"), email = "matias@stat.ubc.ca"),
+Version: 2.0.1
+Date: 2020-07-29
+Authors@R: c(person("Matias", "Salibian-Barrera", role = c("aut", "cre"), email = "matias@stat.ubc.ca"),
              person("Alejandra", "Martinez", role=c("aut"), email="ale_m_martinez@hotmail.com")
             )
 Description: A robust backfitting algorithm for additive models based on (robust) local polynomial 
@@ -16,9 +16,9 @@ RoxygenNote: 6.1.1
 Encoding: UTF-8
 Imports: stats, graphics
 NeedsCompilation: yes
-Packaged: 2019-06-13 18:51:08 UTC; matias
-Author: Matias Salibian-Barrera [cre],
+Packaged: 2020-07-29 23:19:53 UTC; Matias
+Author: Matias Salibian-Barrera [aut, cre],
   Alejandra Martinez [aut]
 Maintainer: Matias Salibian-Barrera <matias@stat.ubc.ca>
 Repository: CRAN
-Date/Publication: 2019-06-14 08:20:03 UTC
+Date/Publication: 2020-07-30 04:40:02 UTC

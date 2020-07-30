@@ -34,6 +34,15 @@ psi.w <- function(r, k= 4.685){
   return(w)
 }
 
+#Tukey's loss function
+rho.tukey <- function(r, k=4.685){
+  if(abs(r)<=k){
+    return( 1-(1-(r/k)^2)^3 )
+  }else{
+    return(1)
+  }
+}
+
 #' Derivative of Huber's loss function.
 #'
 #' This function evaluates the first derivative of Huber's loss function.
@@ -58,6 +67,16 @@ psi.huber <- function(r, k=1.345)
 #Huber's weight function "Psi(r)/r"
 psi.huber.w <- function(r, k=1.345)
   pmin(1, k/abs(r))
+
+
+#Huber's loss function
+rho.huber <- function(r, k=1.345){
+  if(abs(r)<=k){
+    return(r^2)
+  }else{
+    return(2*k*abs(r)-k^2)
+  }
+}
 
 #' Epanechnikov kernel
 #'
@@ -94,8 +113,14 @@ my.norm.2 <- function(x) sqrt(sum(x^2))
 #' This function computes the standard backfitting algorithm for additive models,
 #' using a squared loss function and local polynomial smoothers.
 #'
-#' @param Xp a matrix (n x p) containing the explanatory variables
-#' @param yp vector of responses (missing values are allowed)
+#' @param formula an object of class \code{formula} (or one that can be coerced to 
+#' that class): a symbolic description of the model to be fitted. 
+#' @param data an optional data frame, list or environment (or object coercible 
+#' by \link{as.data.frame} to a data frame) containing the variables in the model. 
+#' If not found in \code{data}, the variables are taken from \code{environment(formula)}, 
+#' typically the environment from which the function was called.
+#' @param subset an optional vector specifying a subset of observations to be used in 
+#' the fitting process.
 #' @param point matrix of points where predictions will be computed and returned.
 #' @param windows vector of bandwidths for the local polynomial smoother,
 #' one per explanatory variable.
@@ -119,15 +144,33 @@ my.norm.2 <- function(x) sqrt(sum(x^2))
 #'
 #' @examples
 #' data(airquality)
-#' x <- airquality
-#' x <- x[complete.cases(x), c('Ozone', 'Solar.R', 'Wind', 'Temp')]
-#' y <- as.vector(x$Ozone)
-#' x <- as.matrix(x[, c('Solar.R', 'Wind', 'Temp')])
-#' tmp <- backf.cl(Xp = x, yp=y, windows=c(130, 9, 10), degree=1)
+#' tmp <- backf.cl(Ozone ~ Solar.R + Wind + Temp, data=airquality, 
+#' subset=complete.cases(airquality), windows=c(130, 9, 10), degree=1)
 #'
 #' @export
-backf.cl <- function(Xp, yp, point=NULL, windows, epsilon=1e-6, degree=0,
+backf.cl <- function(formula, data, subset, point=NULL, windows, epsilon=1e-6, degree=0,
                      prob=NULL, max.it=100) {
+  
+  cl <- match.call()
+  mf <- match.call(expand.dots = FALSE)
+  m <- match(c("formula", "data", "subset"), names(mf), 0)
+  mf <- mf[c(1, m)]
+  mf$drop.unused.levels <- TRUE
+  mf[[1]] <- as.name("model.frame")
+  mf <- eval(mf, parent.frame())
+  mt <- attr(mf, "terms") # allow model.frame to update it
+  yp <- model.response(mf, "numeric")
+  Xp <- model.matrix(mt, mf, NULL) 
+  # above line typically is "model.matrix(mt, mf, contrasts)" and contrasts equals NULL
+
+  # remove the default intercept, it is estimated separately  
+  if( all( Xp[, 1] == 1 ) ) Xp <- Xp[, -1]
+  
+
+  # AUX <- get_all_vars(formula)
+  # yp <- AUX[,1]
+  # Xp <- AUX[,-1]
+  
   n <- length(yp)
   Xp <- as.matrix(Xp)
   q <- dim(Xp)[2]
@@ -173,11 +216,23 @@ backf.cl <- function(Xp, yp, point=NULL, windows, epsilon=1e-6, degree=0,
   prediccion <- NULL
 
   if(!is.null(point)){
-    if(!is.matrix(point)) { #is.null(dim(point))) {
-      prediccion <- mpunto <- matrix(point, byrow=TRUE, ncol=length(point)) #t(as.matrix(point))
+    
+    #if(!is.matrix(point)) { #is.null(dim(point))) {
+    #  prediccion <- mpunto <- as.matrix(point) # matrix(point, byrow=TRUE, ncol=length(point))
+    #} else {
+    #  prediccion <- mpunto <- point
+    #}
+    
+    if(is.null(dim(point))){
+      if(q==1){
+        prediccion <- mpunto <- as.matrix(point)
+      }else{
+        prediccion <- mpunto <- t(as.matrix(point))
+      }
     } else {
       prediccion <- mpunto <- point
     }
+    
     np <- dim(mpunto)[1]
     for(k in 1:np){
       for(j in 1:q){
@@ -193,10 +248,9 @@ backf.cl <- function(Xp, yp, point=NULL, windows, epsilon=1e-6, degree=0,
       }
     }
   }
-  object <- list(alpha=alpha, g.matrix=g.matriz, prediction=prediccion, Xp=Xp, yp=yp)
+  object <- list(alpha=alpha, g.matrix=g.matriz, prediction=prediccion, Xp=Xp, yp=yp, formula=formula)
   class(object) <- c("backf.cl", "backf", "list")
   return(object)
-  # return(list(alpha=alpha, g.matrix=g.matriz, prediction=prediccion))
 }
 
 
@@ -207,8 +261,14 @@ backf.cl <- function(Xp, yp, point=NULL, windows, epsilon=1e-6, degree=0,
 #' This function computes a robust backfitting algorithm for additive models
 #' using robust local polynomial smoothers.
 #'
-#' @param Xp a matrix (n x p) containing the explanatory variables
-#' @param yp vector of responses (missing values are allowed)
+#' @param formula an object of class \code{formula} (or one that can be coerced to 
+#' that class): a symbolic description of the model to be fitted. 
+#' @param data an optional data frame, list or environment (or object coercible 
+#' by \link{as.data.frame} to a data frame) containing the variables in the model. 
+#' If not found in \code{data}, the variables are taken from \code{environment(formula)}, 
+#' typically the environment from which the function was called.
+#' @param subset an optional vector specifying a subset of observations to be used in 
+#' the fitting process.
 #' @param point matrix of points where predictions will be computed and returned.
 #' @param windows vector of bandwidths for the local polynomial smoother,
 #' one per explanatory variable.
@@ -239,16 +299,32 @@ backf.cl <- function(Xp, yp, point=NULL, windows, epsilon=1e-6, degree=0,
 #'
 #' @examples
 #' data(airquality)
-#' x <- airquality
-#' x <- x[complete.cases(x), c('Ozone', 'Solar.R', 'Wind', 'Temp')]
-#' y <- as.vector(x$Ozone)
-#' x <- as.matrix(x[, c('Solar.R', 'Wind', 'Temp')])
-#' tmp <- backf.rob(Xp = x, yp=y, windows=c(136.7, 8.9, 4.8) , degree=1)
+#' tmp <- backf.rob(Ozone ~ Solar.R + Wind + Temp, data=airquality, 
+#' subset=complete.cases(airquality), windows=c(136.7, 8.9, 4.8), degree=1)
 #'
 #' @export
-backf.rob <- function(Xp, yp, windows, point=NULL, epsilon=1e-6, degree=0,
+backf.rob <- function(formula, data, subset, windows, point=NULL, epsilon=1e-6, degree=0,
                       sigma.hat=NULL, prob=NULL, max.it=50, k.h=1.345,
                       k.t = 4.685, type='Huber'){
+  cl <- match.call()
+  mf <- match.call(expand.dots = FALSE)
+  m <- match(c("formula", "data", "subset"), names(mf), 0)
+  mf <- mf[c(1, m)]
+  mf$drop.unused.levels <- TRUE
+  mf[[1]] <- as.name("model.frame")
+  mf <- eval(mf, parent.frame())
+  mt <- attr(mf, "terms") # allow model.frame to update it
+  yp <- model.response(mf, "numeric")
+  Xp <- model.matrix(mt, mf, NULL) 
+  # above line typically is "model.matrix(mt, mf, contrasts)" and contrasts equals NULL
+  
+  # remove the default intercept, it is estimated separately  
+  if( all( Xp[, 1] == 1 ) ) Xp <- Xp[, -1]
+  
+  # AUX <- get_all_vars(formula)
+  # yp <- AUX[,1]
+  # Xp <- AUX[,-1]
+  
   Xp <- as.matrix(Xp)
   n <- length(yp)
   q <- dim(Xp)[2]
@@ -387,11 +463,24 @@ backf.rob <- function(Xp, yp, windows, point=NULL, epsilon=1e-6, degree=0,
   prediccion <- NULL
 
   if(!is.null(point)){
-    if(!is.matrix(point)) { #is.null(dim(point))) {
-      prediccion <- mpunto <- matrix(point, byrow=TRUE, ncol=length(point)) # t(as.matrix(point))
+    
+    
+    #if(!is.matrix(point)) { #is.null(dim(point))) {
+    #  prediccion <- mpunto <-  as.matrix(point) #matrix(point, byrow=TRUE, ncol=length(point))
+    #} else {
+    #  prediccion <- mpunto <- point
+    #}
+    
+    if(is.null(dim(point))){
+      if(q==1){
+        prediccion <- mpunto <- as.matrix(point)
+      }else{
+        prediccion <- mpunto <- t(as.matrix(point))
+      }
     } else {
       prediccion <- mpunto <- point
     }
+    
     np <- dim(mpunto)[1]
     for(k in 1:np){
       for(j in 1:q){
@@ -446,139 +535,161 @@ backf.rob <- function(Xp, yp, windows, point=NULL, epsilon=1e-6, degree=0,
       }
     }
   }
-  object <- list(alpha=alpha,g.matrix=g.matriz, sigma.hat=sigma.hat, prediction=prediccion, Xp=Xp, yp=yp)
+  object <- list(alpha=alpha,g.matrix=g.matriz, sigma.hat=sigma.hat, prediction=prediccion, type=type, Xp=Xp, yp=yp, formula=formula)
   class(object) <- c("backf.rob", "backf", "list")
   return(object)
   # return(list(alpha=alpha,g.matrix=g.matriz, sigma.hat=sigma.hat, prediction=prediccion))
 }
 
 
-#' Cross-validation for Robust Backfitting
-#'
-#' This function performs one run of K-fold cross-validation using the
-#' robust backfitting algorithm.
-#'
-#' This function performs one run of K-fold cross-validation using the
-#' robust backfitting algorithm and returns a robust measure of the
-#' hold out prediction error.
-#'
-#' @param k a positive integer indicating the number of folds.
-#' @param Xp a matrix (n x p) containing the explanatory variables
-#' @param yp vector of responses (missing values are allowed)
-#' @param windows vector of bandwidths for the local polynomial smoother,
-#' one per explanatory variable.
-#' @param epsilon convergence criterion. Maximum allowed relative difference between
-#' consecutive estimates
-#' @param degree degree of the local polynomial smoother. Defaults to \code{0} (local constant).
-#' @param seed an integer used to set the seed of the pseudo-number generator that
-#' creates the \code{k} folds.
-#' @param max.it Maximum number of iterations for the algorithm.
-#' @param k.h tuning constant for a Huber-type loss function.
-#' @param k.t tuning constant for a Tukey-type loss function.
-#' @param type one of either \code{'Tukey'} or \code{'Huber'}.
-#'
-#' @return A real number with a robust measure of (hold-out) prediction error
-#'
-#' @author Matias Salibian-Barrera, \email{matias@stat.ubc.ca}, Alejandra Martinez
-#'
-#' @examples
-#' data(airquality)
-#' x <- airquality
-#' x <- x[complete.cases(x), c('Ozone', 'Solar.R', 'Wind', 'Temp')]
-#' y <- as.vector(x$Ozone)
-#' x <- as.matrix(x[, c('Solar.R', 'Wind', 'Temp')])
-#' backf.rob.cv(k=5, Xp = x, yp=y, windows=c(136.7, 8.9, 4.8), type='Tukey', degree=1)
-#'
-#' @export
-backf.rob.cv <- function(k=5, Xp, yp, windows, epsilon=1e-6, degree, type='Tukey', k.h=1.345,
-                         k.t = 4.685, seed=123, max.it=50) {
-  # does k-fold CV and returns "robust mean-squared prediction error"
-  n <- length(yp)
-  # k1 <- floor(n/k)
-  # ids <- rep(1:k, each=k1)
-  # if( length(ids) < n ) ids <- c(ids, 1:(n%%k))
-  # save existing random seed
-  if(exists(".Random.seed", where=.GlobalEnv)) old.seed <- .Random.seed
-  set.seed(seed)
-  ids <- sample( (1:n) %% k + 1 )
-  Xp <- as.matrix(Xp)
-  ids <- sample(ids)
-  preds <- rep(NA, n)
-  for(j in 1:k) {
-    XX <- Xp[ids!=j, , drop=FALSE]
-    yy <- yp[ids!=j]
-    tmp <- try( backf.rob(Xp=XX, yp=yy, point=Xp[ids==j,], windows=windows, epsilon=epsilon,
-                          degree=degree, type=type, max.it=max.it, k.h=k.h, k.t=k.t) )
-    if( class(tmp)[1] != 'try-error') {
-      preds[ids==j] <- rowSums(tmp$prediction) + tmp$alpha
-    }
+# #' Cross-validation for Robust Backfitting
+# #'
+# #' This function performs one run of K-fold cross-validation using the
+# #' robust backfitting algorithm.
+# #'
+# #' This function performs one run of K-fold cross-validation using the
+# #' robust backfitting algorithm and returns a robust measure of the
+# #' hold out prediction error.
+# #'
+# #' @param k a positive integer indicating the number of folds.
+# #' @param Xp a matrix (n x p) containing the explanatory variables
+# #' @param yp vector of responses (missing values are allowed)
+# #' @param windows vector of bandwidths for the local polynomial smoother,
+# #' one per explanatory variable.
+# #' @param epsilon convergence criterion. Maximum allowed relative difference between
+# #' consecutive estimates
+# #' @param degree degree of the local polynomial smoother. Defaults to \code{0} (local constant).
+# #' @param seed an integer used to set the seed of the pseudo-number generator that
+# #' creates the \code{k} folds.
+# #' @param max.it Maximum number of iterations for the algorithm.
+# #' @param k.h tuning constant for a Huber-type loss function.
+# #' @param k.t tuning constant for a Tukey-type loss function.
+# #' @param type one of either \code{'Tukey'} or \code{'Huber'}.
+# #'
+# #' @return A real number with a robust measure of (hold-out) prediction error
+# #'
+# #' @author Matias Salibian-Barrera, \email{matias@stat.ubc.ca}, Alejandra Martinez
+# #'
+# #' @examples
+# #' data(airquality)
+# #' x <- airquality
+# #' x <- x[complete.cases(x), c('Ozone', 'Solar.R', 'Wind', 'Temp')]
+# #' y <- as.vector(x$Ozone)
+# #' x <- as.matrix(x[, c('Solar.R', 'Wind', 'Temp')])
+# #' backf.rob.cv(k=5, Xp = x, yp=y, windows=c(136.7, 8.9, 4.8), type='Tukey', degree=1)
+# #'
+# #' @export
+# backf.rob.cv <- function(k=5, Xp, yp, windows, epsilon=1e-6, degree, type='Tukey', k.h=1.345,
+#                          k.t = 4.685, seed=123, max.it=50) {
+#   # does k-fold CV and returns "robust mean-squared prediction error"
+#   n <- length(yp)
+#   # k1 <- floor(n/k)
+#   # ids <- rep(1:k, each=k1)
+#   # if( length(ids) < n ) ids <- c(ids, 1:(n%%k))
+#   # save existing random seed
+#   if(exists(".Random.seed", where=.GlobalEnv)) old.seed <- .Random.seed
+#   set.seed(seed)
+#   ids <- sample( (1:n) %% k + 1 )
+#   Xp <- as.matrix(Xp)
+#   preds <- rep(NA, n)
+#   for(j in 1:k) {
+#     XX <- Xp[ids!=j, , drop=FALSE]
+#     yy <- yp[ids!=j]
+#     tmp <- try( backf.rob(yy ~ XX, point=Xp[ids==j,, drop=FALSE], windows=windows, epsilon=epsilon, degree=degree, type=type, max.it=max.it, k.h=k.h, k.t=k.t) )
+#       #try( backf.rob(Xp=XX, yp=yy, point=Xp[ids==j,, drop=FALSE], windows=windows, epsilon=epsilon, degree=degree, type=type, max.it=max.it, k.h=k.h, k.t=k.t) )
+#     if( class(tmp)[1] != 'try-error') {
+#       preds[ids==j] <- rowSums(tmp$prediction) + tmp$alpha
+#     }
+#   }
+#   # restore seed existing before call
+#   if(exists('old.seed')) assign('.Random.seed', old.seed, envir=.GlobalEnv)
+#   return( mad( (preds-yp), na.rm=TRUE )^2 + median( (preds-yp)^2, na.rm=TRUE ) )
+# }
+# 
+# #' Cross-validation for the Classical Backfitting algorithm
+# #'
+# #' This function performs one run of K-fold cross-validation using the
+# #' classical backfitting algorithm.
+# #'
+# #' This function performs one run of K-fold cross-validation using the
+# #' classical backfitting algorithm and returns the mean squared
+# #' hold out prediction error.
+# #'
+# #' @param k a positive integer indicating the number of folds.
+# #' @param Xp a matrix (n x p) containing the explanatory variables
+# #' @param yp vector of responses (missing values are allowed)
+# #' @param windows vector of bandwidths for the local polynomial smoother,
+# #' one per explanatory variable.
+# #' @param epsilon convergence criterion. Maximum allowed relative difference between
+# #' consecutive estimates
+# #' @param degree degree of the local polynomial smoother. Defaults to \code{0} (local constant).
+# #' @param seed an integer used to set the seed of the pseudo-number generator that
+# #' creates the \code{k} folds.
+# #' @param max.it Maximum number of iterations for the algorithm.
+# #'
+# #' @return A real number with the mean squared (hold-out) prediction error
+# #'
+# #' @author Matias Salibian-Barrera, \email{matias@stat.ubc.ca}, Alejandra Martinez
+# #'
+# #' @examples
+# #' data(airquality)
+# #' x <- airquality
+# #' x <- x[complete.cases(x), c('Ozone', 'Solar.R', 'Wind', 'Temp')]
+# #' y <- as.vector(x$Ozone)
+# #' x <- as.matrix(x[, c('Solar.R', 'Wind', 'Temp')])
+# #' backf.l2.cv(k=5, Xp = x, yp=y, windows=c(130, 9, 10), degree=1)
+# #'
+# #' @export
+# backf.l2.cv <- function(k=5, Xp, yp, windows, epsilon=1e-6,
+#                         degree, seed=123, max.it=50) {
+#   # does k-fold CV and returns mean-squared prediction error
+#   n <- length(yp)
+#   # k1 <- floor(n/k)
+#   # ids <- rep(1:k, each=k1)
+#   # if( length(ids) < n ) ids <- c(ids, 1:(n%%k))
+#   # save existing random seed
+#   if(exists(".Random.seed", where=.GlobalEnv)) old.seed <- .Random.seed
+#   set.seed(seed)
+#   ids <- sample( (1:n) %% k + 1 )
+#   Xp <- as.matrix(Xp)
+#   preds <- rep(NA, n)
+#   for(j in 1:k) {
+#     XX <- Xp[ids!=j, , drop=FALSE]
+#     yy <- yp[ids!=j]
+#     tmp <- try( backf.cl(yy ~ XX, point=Xp[ids==j, , drop=FALSE], windows=windows, epsilon=epsilon, degree=degree, max.it=max.it) )
+#       #try( backf.cl(Xp=XX, yp=yy, point=Xp[ids==j, , drop=FALSE], windows=windows, epsilon=epsilon, degree=degree, max.it=max.it) )
+#     if( class(tmp)[1] != 'try-error') {
+#       preds[ids==j] <- rowSums(tmp$prediction) + tmp$alpha
+#     }
+#   }
+#   # restore seed existing before call
+#   if(exists('old.seed')) assign('.Random.seed', old.seed, envir=.GlobalEnv)
+#   return( mean( (preds-yp)^2, na.rm=TRUE ) )
+# }
+
+
+pos.est <- function(y, sigma.hat, typePhi, ini=NULL, epsilon=1e-6, iter.max=10){
+  yp <- y[ tmp<-!is.na(y) ]
+  if(is.null(ini)){
+    ini <- median(yp)
   }
-  # restore seed existing before call
-  if(exists('old.seed')) assign('.Random.seed', old.seed, envir=.GlobalEnv)
-  return( mad( (preds-yp), na.rm=TRUE )^2 + median( (preds-yp), na.rm=TRUE )^2 )
+  corte <- 10
+  iter <- 0
+  n <- length(yp)
+  prob <- rep(1,n)
+  k.h <- 1.345
+  k.t <- 4.685
+  if(typePhi=='Huber'){
+    beta <- .C("huber_pos", as.integer(n), as.double(yp), as.double(ini), as.double(epsilon), 
+               as.double(sigma.hat), as.double(prob), as.double(k.h), as.integer(iter.max), salida=as.double(0) )$salida
+  }
+  if(typePhi=='Tukey'){
+    beta <- .C("tukey_pos", as.integer(n), as.double(yp), as.double(ini), as.double(epsilon), 
+               as.double(sigma.hat), as.double(prob), as.double(k.t), as.integer(iter.max), salida=as.double(0) )$salida
+  }
+  return(beta)
 }
 
-#' Cross-validation for the Classical Backfitting algorithm
-#'
-#' This function performs one run of K-fold cross-validation using the
-#' classical backfitting algorithm.
-#'
-#' This function performs one run of K-fold cross-validation using the
-#' classical backfitting algorithm and returns the mean squared
-#' hold out prediction error.
-#'
-#' @param k a positive integer indicating the number of folds.
-#' @param Xp a matrix (n x p) containing the explanatory variables
-#' @param yp vector of responses (missing values are allowed)
-#' @param windows vector of bandwidths for the local polynomial smoother,
-#' one per explanatory variable.
-#' @param epsilon convergence criterion. Maximum allowed relative difference between
-#' consecutive estimates
-#' @param degree degree of the local polynomial smoother. Defaults to \code{0} (local constant).
-#' @param seed an integer used to set the seed of the pseudo-number generator that
-#' creates the \code{k} folds.
-#' @param max.it Maximum number of iterations for the algorithm.
-#'
-#' @return A real number with the mean squared (hold-out) prediction error
-#'
-#' @author Matias Salibian-Barrera, \email{matias@stat.ubc.ca}, Alejandra Martinez
-#'
-#' @examples
-#' data(airquality)
-#' x <- airquality
-#' x <- x[complete.cases(x), c('Ozone', 'Solar.R', 'Wind', 'Temp')]
-#' y <- as.vector(x$Ozone)
-#' x <- as.matrix(x[, c('Solar.R', 'Wind', 'Temp')])
-#' backf.l2.cv(k=5, Xp = x, yp=y, windows=c(130, 9, 10), degree=1)
-#'
-#' @export
-backf.l2.cv <- function(k=5, Xp, yp, windows, epsilon=1e-6,
-                        degree, seed=123, max.it=50) {
-  # does k-fold CV and returns mean-squared prediction error
-  n <- length(yp)
-  # k1 <- floor(n/k)
-  # ids <- rep(1:k, each=k1)
-  # if( length(ids) < n ) ids <- c(ids, 1:(n%%k))
-  # save existing random seed
-  if(exists(".Random.seed", where=.GlobalEnv)) old.seed <- .Random.seed
-  set.seed(seed)
-  ids <- sample( (1:n) %% k + 1 )
-  Xp <- as.matrix(Xp)
-  ids <- sample(ids)
-  preds <- rep(NA, n)
-  for(j in 1:k) {
-    XX <- Xp[ids!=j, , drop=FALSE]
-    yy <- yp[ids!=j]
-    tmp <- try( backf.cl(Xp=XX, yp=yy, point=Xp[ids==j,], windows=windows, epsilon=epsilon,
-                         degree=degree, max.it=max.it) )
-    if( class(tmp)[1] != 'try-error') {
-      preds[ids==j] <- rowSums(tmp$prediction) + tmp$alpha
-    }
-  }
-  # restore seed existing before call
-  if(exists('old.seed')) assign('.Random.seed', old.seed, envir=.GlobalEnv)
-  return( mean( (preds-yp)^2, na.rm=TRUE ) )
-}
 
 
 #' Residuals for objects of class \code{backf}
@@ -617,6 +728,28 @@ residuals.backf <- function(object, ...){
 predict.backf <- function(object, ...){
   return( rowSums(object$g.matrix) + object$alpha )
 }
+
+#' Fitted values for objects of class \code{backf}
+#'
+#' This function returns the fitted values given the covariates of the original sample under an additive model using a classical or robust marginal integration procedure estimator computed with \code{backf.cl} or \code{backf.rob}.
+#'
+#' @param object an object of class \code{backf}, a result of a call to \code{\link{backf.cl}} or \code{\link{backf.rob}}.
+#' @param ... additional other arguments. Currently ignored.
+#'
+#' @return A vector of fitted values.
+#'
+#' @author Alejandra Mercedes Martinez \email{ale_m_martinez@hotmail.com}
+#'
+#' @rawNamespace S3method(fitted.values, backf)
+fitted.values.backf <- function(object,...){
+  UseMethod("fitted")
+}
+
+#' @export
+fitted.backf <- function(object,...){
+  return(predict(object))
+}
+
 
 # plot.backf <- function(object, which=1:np, ask=FALSE,...){
 #   Xp <- object$Xp
@@ -687,12 +820,8 @@ predict.backf <- function(object, ...){
 #' @author Alejandra Mercedes Martinez \email{ale_m_martinez@hotmail.com}
 #'
 #' @examples
-#' data(airquality)
-#' x <- airquality
-#' x <- x[complete.cases(x), c('Ozone', 'Solar.R', 'Wind', 'Temp')]
-#' y <- as.vector(x$Ozone)
-#' x <- as.matrix(x[, c('Solar.R', 'Wind', 'Temp')])
-#' tmp <- backf.rob(Xp = x, yp=y, windows=c(136.7, 8.9, 4.8) , degree=1)
+#' tmp <- backf.rob(Ozone ~ Solar.R + Wind + Temp, data=airquality, 
+#' subset=complete.cases(airquality), windows=c(136.7, 8.9, 4.8), degree=1)
 #' plot(tmp, which=1:2)
 #'
 #' @export
@@ -723,6 +852,47 @@ plot.backf <- function(x, ask=FALSE, which=1:np, ...) {
   }
 }
 
+
+#Multiple R-squared 
+R2 <- function(object,...){
+  yp <- object$yp
+  y <- yp[ tmp<-!is.na(yp) ]
+  n <- length(y)
+  res <- residuals(object)
+  S02 <- sum((y-mean(y))^2)
+  S2 <- sum(res^2)
+  R2 <- (S02-S2)/S02
+  return(R2)
+}
+
+#Robust multiple R-squared
+R2.rob <- function(object,...){
+  yp <- object$yp
+  y <- yp[ tmp<-!is.na(yp) ]
+  n <- length(y)
+  S02 <- 0
+  S2 <- 0
+  res <- residuals(object)
+  sigma.hat <- object$sigma.hat
+  typePhi <- object$type
+  pos <- pos.est(y, sigma.hat, typePhi=typePhi, ini=NULL, epsilon=1e-6, iter.max=50)
+  if(typePhi=='Tukey'){
+    for(i in 1:n){
+      S02 <- S02 + rho.tukey((y[i]-pos)/sigma.hat)
+      S2 <- S2 + rho.tukey(res[i]/sigma.hat)
+    }
+  }
+  if(typePhi=='Huber'){
+    for(i in 1:n){
+      S02 <- S02 + rho.huber((y[i]-pos)/sigma.hat)
+      S2 <- S2 + rho.huber(res[i]/sigma.hat)
+    }
+  }
+  R2.rob <- (S02-S2)/S02
+  return(R2.rob)
+}
+
+
 #' Summary for additive models fits using backfitting
 #'
 #' Summary method for class \code{backf}.
@@ -744,19 +914,104 @@ summary.backf <- function(object,...){
   NextMethod()
 }
 
+#' @export
 summary.backf.cl <- function(object,...){
   message("Estimate of the intercept: ", round(object$alpha,5))
+  message("Multiple R-squared: ", round(R2(object),5))
   res <- residuals(object)
   message("Residuals:")
   summary(res)
 }
 
+#' @export
 summary.backf.rob <- function(object,...){
   message("Estimate of the intercept: ", round(object$alpha,5))
   message("Estimate of the residual standard error: ", round(object$sigma,5))
+  message("Robust multiple R-squared: ", round(R2.rob(object),5))
   res <- residuals(object)
   message("Residuals:")
   summary(res)
 }
 
+#' Deviance for objects of class \code{backf}
+#'
+#' This function returns the deviance of the fitted additive model using one of the three
+#' classical or robust marginal integration estimators, as computed with \code{\link{backf.cl}} or
+#' \code{\link{backf.rob}}.
+#'
+#' @param object an object of class \code{backf}, a result of a call to \code{\link{backf.cl}} or \code{\link{backf.rob}}.
+#' @param ... additional other arguments. Currently ignored.
+#'
+#' @return A real number.
+#'
+#' @author Alejandra Mercedes Martinez \email{ale_m_martinez@hotmail.com}
+#'
+#' @export
+deviance.backf <- function(object, ...){
+  NextMethod()
+}
+
+#' @export
+deviance.backf.cl <- function(object, ...){
+  return( sum( (residuals(object))^2) )
+}
+
+#' @export
+deviance.backf.rob <- function(object, ...){
+  yp <- object$yp
+  y <- yp[ tmp<-!is.na(yp) ]
+  n <- length(y)
+  S2 <- 0
+  res <- residuals(object)
+  sigma.hat <- object$sigma.hat
+  typePhi <- object$type
+  if(typePhi=='Tukey'){
+    for(i in 1:n){
+      S2 <- S2 + rho.tukey(res[i]/sigma.hat)
+    }
+  }
+  if(typePhi=='Huber'){
+    for(i in 1:n){
+      S2 <- S2 + rho.huber(res[i]/sigma.hat)
+    }
+  }
+  return( S2 )
+}
+
+
+
+#' Additive model formula
+#'
+#' Description of the additive model formula extracted from an object of class \code{backf}.
+#'
+#' @param x an object of class \code{backf}, a result of a call to \code{\link{backf.cl}} or \code{\link{backf.rob}}.
+#' @param ... additional other arguments. Currently ignored.
+#'
+#' @return A model formula.
+#'
+#' @author Alejandra Mercedes Martinez \email{ale_m_martinez@hotmail.com}
+#'
+#' @export
+formula.backf <- function(x, ...){
+  return(x$formula )
+}
+
+
+#' Print a Marginal Integration procedure
+#'
+#' The default print method for a \code{backf} object.
+#'
+#' @param x an object of class \code{backf}, a result of a call to \code{\link{backf.cl}} or \code{\link{backf.rob}}.
+#' @param ... additional other arguments. Currently ignored.
+#'
+#' @return A real number.
+#'
+#' @author Alejandra Mercedes Martinez \email{ale_m_martinez@hotmail.com}
+#'
+#' @export
+print.backf <- function(x, ...){
+  cat("Formula:\n")
+  print(x$formula)
+  #cat("\n")
+}
 
